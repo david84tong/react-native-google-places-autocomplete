@@ -91,7 +91,7 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
         ...props.predefinedPlaces.filter((place) => place?.description.length),
       ];
 
-      if (props.currentLocation === true && hasNavigator()) {
+      if (props.currentLocation === true) {
         res.unshift({
           description: props.currentLocationLabel,
           isCurrentLocation: true,
@@ -738,7 +738,7 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       (stateText !== '' ||
         props.predefinedPlaces.length > 0 ||
         props.currentLocation === true) &&
-      listViewDisplayed === true
+      listViewDisplayed === true && dataSource.length > 0
     ) {
       return (
         <FlatList
