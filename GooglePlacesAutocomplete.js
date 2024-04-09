@@ -90,20 +90,18 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       res = [
         ...props.predefinedPlaces.filter((place) => place?.description.length),
       ];
-
-      if (props.currentLocation === true) {
-        res.unshift({
-          description: props.currentLocationLabel,
-          isCurrentLocation: true,
-        });
-      }
     }
 
     res = res.map((place) => ({
       ...place,
       isPredefinedPlace: true,
     }));
-
+    if(results.length > 0 && props.currentLocation) {
+      return [{
+        description: props.currentLocationLabel,
+        isCurrentLocation: true,
+      },...res, ...results];
+    }
     return [...res, ...results];
   };
 
@@ -178,52 +176,11 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
   };
 
   const getCurrentLocation = () => {
-    let options = {
-      enableHighAccuracy: false,
-      timeout: 20000,
-      maximumAge: 1000,
-    };
-
-    if (props.enableHighAccuracyLocation && Platform.OS === 'android') {
-      options = {
-        enableHighAccuracy: true,
-        timeout: 20000,
-      };
-    }
-    const getCurrentPosition =
-      navigator.geolocation.getCurrentPosition ||
-      navigator.geolocation.default.getCurrentPosition;
-
-    getCurrentPosition &&
-      getCurrentPosition(
-        (position) => {
-          if (props.nearbyPlacesAPI === 'None') {
-            let currentLocation = {
-              description: props.currentLocationLabel,
-              geometry: {
-                location: {
-                  lat: position.coords.latitude,
-                  lng: position.coords.longitude,
-                },
-              },
-            };
-
-            _disableRowLoaders();
-            props.onPress(currentLocation, currentLocation);
-          } else {
-            _requestNearby(position.coords.latitude, position.coords.longitude);
-          }
-        },
-        (error) => {
-          _disableRowLoaders();
-          console.error(error.message);
-        },
-        options,
-      );
+    _requestReverseGeocoding(props.currentLatitude, props.currentLongitude);
   };
 
   const _onPress = (rowData) => {
-    if (rowData.isPredefinedPlace !== true && props.fetchDetails === true) {
+    if (rowData.isPredefinedPlace !== true && props.fetchDetails === true && rowData.isCurrentLocation !== true) {
       if (rowData.isLoading === true) {
         // already requesting
         return;
@@ -381,6 +338,73 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       }
     }
     return results;
+  };
+
+  const _requestReverseGeocoding = (latitude, longitude) => {
+    _abortRequests();
+
+    if (
+      latitude !== undefined &&
+      longitude !== undefined &&
+      latitude !== null &&
+      longitude !== null
+    ) {
+      const request = new XMLHttpRequest();
+      _requests.push(request);
+      request.timeout = props.timeout;
+      request.ontimeout = props.onTimeout;
+      request.onreadystatechange = () => {
+        if (request.readyState !== 4) {
+          return;
+        }
+
+        if (request.status === 200) {
+          const responseJSON = JSON.parse(request.responseText);
+          _disableRowLoaders();
+
+          if (typeof responseJSON.results !== 'undefined') {
+            // if (_isMounted === true) {
+            var results = [];
+            results = _filterResultsByTypes(
+              responseJSON.results,
+              props.filterReverseGeocodingByTypes,
+            );
+
+            props.onPress(undefined, results[0]);
+            // }
+          }
+          if (typeof responseJSON.error_message !== 'undefined') {
+            if (!props.onFail)
+              console.warn(
+                'google places autocomplete: ' + responseJSON.error_message,
+              );
+            else {
+              props.onFail(responseJSON.error_message);
+            }
+          }
+        } else {
+          console.warn("google places autocomplete: request could not be completed or has been aborted");
+        }
+      };
+
+      let requestUrl = '';
+      // your key must be allowed to use Google Maps Geocoding API
+      requestUrl =
+      `${url}/geocode/json?` +
+      Qs.stringify({
+        latlng: latitude + ',' + longitude,
+        key: props.query.key,
+        ...props.GoogleReverseGeocodingQuery,
+      });
+      request.open('GET', requestUrl);
+
+      request.withCredentials = requestShouldUseWithCredentials();
+
+      request.send();
+    } else {
+      _results = [];
+      setDataSource(buildRowsFromResults([]));
+    }
   };
 
   const _requestNearby = (latitude, longitude) => {
@@ -556,7 +580,8 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       return props.renderRow(rowData, index);
     }
 
-    return (
+    return <View style={{flex: 1, flexDirection: 'row', justifyContent:'space-between'}}>
+      
       <Text
         style={[
           props.suppressDefaultStyles ? {} : defaultStyles.description,
@@ -569,7 +594,8 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       >
         {_renderDescription(rowData)}
       </Text>
-    );
+      { rowData.isCurrentLocation && <Image source={require('./images/ic_map.png')} style={{width:20, height:20}}></Image>}
+    </View>
   };
 
   const _renderDescription = (rowData) => {
@@ -611,7 +637,7 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       >
         <TouchableHighlight
           style={
-            props.isRowScrollable ? { minWidth: '100%' } : { width: '100%' }
+            [props.isRowScrollable ? { minWidth: '100%' } : { width: '100%' }]
           }
           onPress={() => _onPress(rowData)}
           underlayColor={props.listUnderlayColor || '#c8c7cc'}
@@ -623,7 +649,6 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
               rowData.isPredefinedPlace ? props.styles.specialItemRow : {},
             ]}
           >
-            {_renderLoader(rowData)}
             {_renderRowData(rowData, index)}
           </View>
         </TouchableHighlight>
@@ -836,6 +861,8 @@ GooglePlacesAutocomplete.propTypes = {
   currentLocation: PropTypes.bool,
   currentLocationLabel: PropTypes.string,
   debounce: PropTypes.number,
+  currentLatitude: PropTypes.number,
+  currentLongitude: PropTypes.number,
   disableScroll: PropTypes.bool,
   enableHighAccuracyLocation: PropTypes.bool,
   enablePoweredByContainer: PropTypes.bool,
@@ -884,6 +911,8 @@ GooglePlacesAutocomplete.defaultProps = {
   currentLocation: false,
   currentLocationLabel: 'Current location',
   debounce: 0,
+  currentLatitude: 32.212950,
+  currentLongitude: -110.890110,
   disableScroll: false,
   enableHighAccuracyLocation: true,
   enablePoweredByContainer: true,
