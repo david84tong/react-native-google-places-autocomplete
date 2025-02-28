@@ -1,6 +1,7 @@
 /* eslint-disable react-native/no-inline-styles */
 import debounce from 'lodash.debounce';
 import PropTypes from 'prop-types';
+import _ from "lodash"
 import Qs from 'qs';
 import { v4 as uuidv4 } from 'uuid';
 import React, {
@@ -122,6 +123,10 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
     }
   };
 
+  const getRequestHeaders = (requestUrl) => {
+    return requestUrl?.headers || {};
+  };
+
   const setRequestHeaders = (request, headers) => {
     Object.keys(headers).map((headerKey) =>
       request.setRequestHeader(headerKey, headers[headerKey]),
@@ -227,7 +232,23 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
             setStateText(_renderDescription(rowData));
 
             delete rowData.isLoading;
-            props.onPress(rowData, details);
+            if(props.isNewPlacesAPI ) {
+              props.onPress(rowData, {
+                address_components: _.get(details, "addressComponents",[]),
+                formatted_address: _.get(details, "formattedAddress", ""),
+                name: _.get(details, "name", ""),
+                placeId: _.get(details, "id", ""),
+                geometry: {
+                  location: {
+                    lat:_.get(details, "location.latitude", ""),
+                    lng: _.get(details, "location.longitude", "")
+                  }
+                }
+              });
+            } else {
+              props.onPress(rowData, details);
+            }
+            
             // }
           } else {
             _disableRowLoaders();
@@ -389,6 +410,7 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
         if (request.status === 200) {
           const responseJSON = JSON.parse(request.responseText);
           _disableRowLoaders();
+          console.log(JSON.stringify(responseJSON))
 
           if (typeof responseJSON.results !== 'undefined') {
             // if (_isMounted === true) {
@@ -418,7 +440,7 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
       let requestUrl = '';
       // your key must be allowed to use Google Maps Geocoding API
       requestUrl =
-      `${url}/geocode/json?` +
+      `https://maps.googleapis.com/maps/api/geocode/json?` +
       Qs.stringify({
         latlng: latitude + ',' + longitude,
         key: props.query.key,
@@ -518,6 +540,29 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
     }
   };
 
+  const _filterResultsByPlacePredictions = (unfilteredResults) => {
+    const results = [];
+    for (let i = 0; i < unfilteredResults.length; i++) {
+      if (unfilteredResults[i].placePrediction) {
+        results.push({
+          description: unfilteredResults[i].placePrediction.text?.text,
+          place_id: unfilteredResults[i].placePrediction.placeId,
+          reference: unfilteredResults[i].placePrediction.placeId,
+          structured_formatting: {
+            main_text:
+              unfilteredResults[i].placePrediction.structuredFormat?.mainText
+                ?.text,
+            secondary_text:
+              unfilteredResults[i].placePrediction.structuredFormat
+                ?.secondaryText?.text,
+          },
+          types: unfilteredResults[i].placePrediction.types ?? [],
+        });
+      }
+    }
+    return results;
+  };
+
   const _request = (text) => {
     _abortRequests();
     if (supportedPlatform() && text && text.length >= props.minLength) {
@@ -545,6 +590,14 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
             _results = results;
             setDataSource(buildRowsFromResults(results));
             // }
+          }
+          if (typeof responseJSON.suggestions !== "undefined") {
+            const results = _filterResultsByPlacePredictions(
+              responseJSON.suggestions
+            );
+
+            _results = results;
+            setDataSource(buildRowsFromResults(results, text));
           }
           if (typeof responseJSON.error_message !== 'undefined') {
             if (!props.onFail)
