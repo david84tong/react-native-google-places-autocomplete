@@ -428,6 +428,8 @@ interface GooglePlacesAutocompleteProps {
   /** text input props */
   textInputProps?: TextInputProps | Object;
   timeout?: number;
+  isNewPlacesAPI?: boolean;
+  fields?: string;
 }
 
 export type GooglePlacesAutocompleteRef = {
