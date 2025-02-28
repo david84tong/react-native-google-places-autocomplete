@@ -2,6 +2,7 @@
 import debounce from 'lodash.debounce';
 import PropTypes from 'prop-types';
 import Qs from 'qs';
+import { v4 as uuidv4 } from 'uuid';
 import React, {
   forwardRef,
   useMemo,
@@ -121,14 +122,24 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
     }
   };
 
+  const setRequestHeaders = (request, headers) => {
+    Object.keys(headers).map((headerKey) =>
+      request.setRequestHeader(headerKey, headers[headerKey]),
+    );
+  };
+
   const [stateText, setStateText] = useState('');
   const [dataSource, setDataSource] = useState(buildRowsFromResults([]));
   const [listViewDisplayed, setListViewDisplayed] = useState(
     props.listViewDisplayed === 'auto' ? false : props.listViewDisplayed,
   );
-  const [url] = useState(getRequestUrl(props.requestUrl));
+  const [url, setUrl] = useState(getRequestUrl(props.requestUrl));
 
   const inputRef = useRef();
+  const [sessionToken, setSessionToken] = useState(uuidv4());
+  useEffect(() => {
+    setUrl(getRequestUrl(props.requestUrl));
+  }, [getRequestUrl, props.requestUrl]);
 
   useEffect(() => {
     // This will load the default value's search results after the view has
@@ -204,9 +215,12 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
         if (request.status === 200) {
           const responseJSON = JSON.parse(request.responseText);
 
-          if (responseJSON.status === 'OK') {
+          if (responseJSON.status === 'OK'  ||
+            (props.isNewPlacesAPI && responseJSON.id)) {
             // if (_isMounted === true) {
-            const details = responseJSON.result;
+              const details = props.isNewPlacesAPI
+              ? responseJSON
+              : responseJSON.result;
             _disableRowLoaders();
             _onBlur();
 
@@ -244,18 +258,32 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
         }
       };
 
-      request.open(
-        'GET',
-        `${url}/place/details/json?` +
-          Qs.stringify({
-            key: props.query.key,
-            placeid: rowData.place_id,
-            language: props.query.language,
-            ...props.GooglePlacesDetailsQuery,
-          }),
-      );
+      if (props.isNewPlacesAPI) {
+        request.open(
+          'GET',
+          `${url}/v1/places/${rowData.place_id}?` +
+            Qs.stringify({
+              key: props.query.key,
+              sessionToken,
+              fields: props.fields,
+            }),
+        );
+        setSessionToken(uuidv4());
+      } else {
+        request.open(
+          'GET',
+          `${url}/place/details/json?` +
+            Qs.stringify({
+              key: props.query.key,
+              placeid: rowData.place_id,
+              language: props.query.language,
+              ...props.GooglePlacesDetailsQuery,
+            }),
+        );
+      }
 
       request.withCredentials = requestShouldUseWithCredentials();
+      setRequestHeaders(request, getRequestHeaders(props.requestUrl));
 
       request.send();
     } else if (rowData.isCurrentLocation === true) {
@@ -536,17 +564,39 @@ export const GooglePlacesAutocomplete = forwardRef((props, ref) => {
         setStateText(props.preProcess(text));
       }
 
-      request.open(
-        'GET',
-        `${url}/place/autocomplete/json?input=` +
-          encodeURIComponent(text) +
-          '&' +
-          Qs.stringify(props.query),
-      );
+      if (props.isNewPlacesAPI) {
+        const keyQueryParam = props.query.key
+          ? '?' +
+            Qs.stringify({
+              key: props.query.key,
+            })
+          : '';
+        request.open('POST', `${url}/v1/places:autocomplete${keyQueryParam}`);
+      } else {
+        request.open(
+          'GET',
+          `${url}/place/autocomplete/json?input=` +
+            encodeURIComponent(text) +
+            '&' +
+            Qs.stringify(props.query),
+        );
+      }
 
       request.withCredentials = requestShouldUseWithCredentials();
+      setRequestHeaders(request, getRequestHeaders(props.requestUrl));
 
-      request.send();
+      if (props.isNewPlacesAPI) {
+        const { key, locationbias, types, ...rest } = props.query;
+        request.send(
+          JSON.stringify({
+            input: text,
+            sessionToken,
+            ...rest,
+          }),
+        );
+      } else {
+        request.send();
+      }
     } else {
       _results = [];
       setDataSource(buildRowsFromResults([]));
@@ -904,6 +954,8 @@ GooglePlacesAutocomplete.propTypes = {
   textInputHide: PropTypes.bool,
   textInputProps: PropTypes.object,
   timeout: PropTypes.number,
+  isNewPlacesAPI: PropTypes.bool,
+  fields: PropTypes.string,
 };
 
 GooglePlacesAutocomplete.defaultProps = {
@@ -949,6 +1001,8 @@ GooglePlacesAutocomplete.defaultProps = {
   textInputHide: false,
   textInputProps: {},
   timeout: 20000,
+  isNewPlacesAPI: false,
+  fields: '*',
 };
 
 export default { GooglePlacesAutocomplete };
